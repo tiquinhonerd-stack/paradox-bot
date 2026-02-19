@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import threading
 import asyncio
 import os
@@ -11,10 +11,28 @@ CHANNEL_ID = int(os.environ.get('CHANNEL_ID'))
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 app = Flask(__name__)
-cofres_liberacao = {} 
+cofres_liberacao = {}
 
 @app.route('/')
 def home(): return "Bot Online!"
+
+# NOVA ROTA: Permite que o GTA baixe os dados atuais
+@app.route('/status', methods=['GET'])
+def get_status():
+    status_atual = {}
+    agora = time.time()
+    for nome, val in cofres_liberacao.items():
+        if isinstance(val, (float, int)):
+            restante = int(val - agora)
+            if restante > 0:
+                m, s = divmod(restante, 60)
+                h, m = divmod(m, 60)
+                status_atual[nome] = {"status": f"{h:02d}:{m:02d}:{s:02d}"}
+            else:
+                status_atual[nome] = {"status": "LIVRE"}
+        else:
+            status_atual[nome] = {"status": val}
+    return jsonify(status_atual)
 
 def processar_status(nome, status):
     if "ROUBANDO" in status:
@@ -32,26 +50,20 @@ def processar_status(nome, status):
 def update():
     data = request.json
     if not data: return {"status": "error"}, 400
-    
     if 'todos' in data:
         for nome, status in data['todos'].items():
             processar_status(nome, status)
-    elif 'nome' in data:
-        processar_status(data['nome'], data['status'])
-        
     return {"status": "ok"}
 
 async def atualizar_painel():
     await bot.wait_until_ready()
     canal = bot.get_channel(CHANNEL_ID)
     msg_painel = None
-
     while not bot.is_closed():
         if cofres_liberacao:
             embed = discord.Embed(title="📊 MONITOR DE COFRES PARADOX", color=0x2f3136)
             descricao = ""
             agora = time.time()
-            
             for nome in sorted(cofres_liberacao.keys()):
                 val = cofres_liberacao[nome]
                 if isinstance(val, (float, int)):
@@ -66,27 +78,17 @@ async def atualizar_painel():
                     status_str = "🟡 **ROUBANDO...**"
                 else:
                     status_str = "🟢 **LIVRE**"
-                
                 descricao += f"**{nome}**: {status_str}\n"
-            
             embed.description = descricao
-            embed.set_footer(text=f"Sincronizado • Próxima atualização visual em 1s")
-
             try:
                 if msg_painel is None:
-                    async for message in canal.history(limit=10):
+                    async for message in canal.history(limit=5):
                         if message.author == bot.user:
                             msg_painel = message
                             break
-                
-                if msg_painel:
-                    await msg_painel.edit(embed=embed)
-                else:
-                    await canal.purge(limit=5, check=lambda m: m.author == bot.user)
-                    msg_painel = await canal.send(embed=embed)
-            except:
-                msg_painel = None
-        
+                if msg_painel: await msg_painel.edit(embed=embed)
+                else: msg_painel = await canal.send(embed=embed)
+            except: msg_painel = None
         await asyncio.sleep(1)
 
 def run_flask():
@@ -94,7 +96,6 @@ def run_flask():
 
 @bot.event
 async def on_ready():
-    print(f'✅ Bot conectado: {bot.user}')
     bot.loop.create_task(atualizar_painel())
 
 if __name__ == '__main__':
