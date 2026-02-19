@@ -5,10 +5,9 @@ import threading
 import asyncio
 import os
 
-# --- CONFIGURAÇÃO ---
-TOKEN = 'SEU_TOKEN_AQUI'
-CHANNEL_ID = SEU_ID_DO_CANAL  # Sem aspas, apenas o número
-# --------------------
+# O Bot vai ler esses valores das configurações do Render
+TOKEN = os.environ.get('TOKEN')
+CHANNEL_ID_STR = os.environ.get('CHANNEL_ID')
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 app = Flask(__name__)
@@ -26,14 +25,17 @@ def update():
 
 async def atualizar_painel():
     await bot.wait_until_ready()
-    canal = bot.get_channel(CHANNEL_ID)
+    try:
+        canal = bot.get_channel(int(CHANNEL_ID_STR))
+    except:
+        print("ERRO: CHANNEL_ID inválido nas configurações do Render!")
+        return
+
     global msg_painel
-    
     while not bot.is_closed():
         if cofres_status:
             embed = discord.Embed(title="📊 MONITOR DE COFRES PARADOX", color=0x00FF00)
             descricao = ""
-            # Ordena os nomes para a tabela não ficar pulando
             for nome in sorted(cofres_status.keys()):
                 status = cofres_status[nome]
                 emoji = "🟢" if "LIVRE" in status else "🔴" if ":" in status else "🟡"
@@ -48,11 +50,10 @@ async def atualizar_painel():
                 else:
                     await msg_painel.edit(embed=embed)
             except Exception as e:
-                print(f"Erro ao editar: {e}")
+                print(f"Erro ao editar/enviar: {e}")
         await asyncio.sleep(10)
 
 def run_flask():
-    # O Render exige que usemos a porta que eles fornecem
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
