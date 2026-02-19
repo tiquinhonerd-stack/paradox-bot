@@ -11,8 +11,7 @@ CHANNEL_ID = int(os.environ.get('CHANNEL_ID'))
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 app = Flask(__name__)
-msg_painel_id = None
-cofres_liberacao = {} # Armazena o timestamp de quando vai liberar
+cofres_liberacao = {} 
 
 @app.route('/')
 def home(): return "Bot Online!"
@@ -21,40 +20,36 @@ def home(): return "Bot Online!"
 def update():
     data = request.json
     if data and 'nome' in data:
-        # Recebe o tempo que falta em segundos e soma com o tempo atual do servidor
-        if ":" in data['status'] or "ROUBANDO" in data['status']:
-            cofres_liberacao[data['nome']] = data['status']
-        else:
-            cofres_liberacao[data['nome']] = "LIVRE"
-            
-        # Se for tempo (formato HH:MM:SS), calculamos o momento exato da liberação
-        if data['status'].count(':') == 2:
-            h, m, s = map(int, data['status'].split(':'))
+        status = data['status']
+        if "ROUBANDO" in status:
+            cofres_liberacao[data['nome']] = "ROUBANDO..."
+        elif status.count(':') == 2: # Formato HH:MM:SS
+            h, m, s = map(int, status.split(':'))
             segundos_faltando = h * 3600 + m * 60 + s
             cofres_liberacao[data['nome']] = time.time() + segundos_faltando
-            
+        else:
+            cofres_liberacao[data['nome']] = "LIVRE"
     return {"status": "ok"}
 
 async def atualizar_painel():
     await bot.wait_until_ready()
     canal = bot.get_channel(CHANNEL_ID)
-    global msg_painel_id
+    msg_painel = None
 
     while not bot.is_closed():
         if cofres_liberacao:
-            embed = discord.Embed(title="📊 MONITOR DE COFRES PARADOX", color=0x00FF00)
+            embed = discord.Embed(title="📊 MONITOR DE COFRES PARADOX", color=0x2f3136)
             descricao = ""
             agora = time.time()
             
             for nome in sorted(cofres_liberacao.keys()):
                 val = cofres_liberacao[nome]
-                
-                if isinstance(val, float): # Se for um timestamp de liberação
+                if isinstance(val, float):
                     restante = int(val - agora)
                     if restante > 0:
                         m, s = divmod(restante, 60)
                         h, m = divmod(m, 60)
-                        status_str = f"🔴 `{h:02d}:{m:02d}:{s:02d}`"
+                        status_str = f"🔴 `释放: {h:02d}:{m:02d}:{s:02d}`"
                     else:
                         status_str = "🟢 **LIVRE**"
                 elif val == "ROUBANDO...":
@@ -65,23 +60,35 @@ async def atualizar_painel():
                 descricao += f"**{nome}**: {status_str}\n"
             
             embed.description = descricao
+            embed.set_footer(text="Atualizando em tempo real • v0.4")
+
             try:
-                msg = None
-                if msg_painel_id:
-                    try: msg = await canal.fetch_message(msg_painel_id)
-                    except: msg = None
+                # Tenta encontrar a última mensagem do bot no canal para editar
+                if msg_painel is None:
+                    async for message in canal.history(limit=10):
+                        if message.author == bot.user:
+                            msg_painel = message
+                            break
                 
-                if msg: await msg.edit(embed=embed)
+                if msg_painel:
+                    await msg_painel.edit(embed=embed)
                 else:
-                    await canal.purge(limit=2)
-                    nova_msg = await canal.send(embed=embed)
-                    msg_painel_id = nova_msg.id
-            except: pass
+                    # Se não achou nenhuma, limpa o canal e envia uma nova
+                    await canal.purge(limit=5, check=lambda m: m.author == bot.user)
+                    msg_painel = await canal.send(embed=embed)
+            except Exception as e:
+                print(f"Erro ao atualizar: {e}")
+                msg_painel = None # Reseta para tentar achar/criar na próxima volta
         
-        await asyncio.sleep(1) # ATUALIZA A CADA 1 SEGUNDO
+        await asyncio.sleep(1) # Atualiza o cronômetro a cada 1 segundo
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+
+@bot.event
+async def on_ready():
+    print(f'✅ Bot conectado: {bot.user}')
+    bot.loop.create_task(atualizar_painel())
 
 if __name__ == '__main__':
     threading.Thread(target=run_flask, daemon=True).start()
