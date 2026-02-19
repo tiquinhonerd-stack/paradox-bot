@@ -16,19 +16,29 @@ cofres_liberacao = {}
 @app.route('/')
 def home(): return "Bot Online!"
 
+def processar_status(nome, status):
+    if "ROUBANDO" in status:
+        cofres_liberacao[nome] = "ROUBANDO..."
+    elif status.count(':') == 2:
+        try:
+            h, m, s = map(int, status.split(':'))
+            segundos_faltando = h * 3600 + m * 60 + s
+            cofres_liberacao[nome] = time.time() + segundos_faltando
+        except: pass
+    else:
+        cofres_liberacao[nome] = "LIVRE"
+
 @app.route('/update', methods=['POST'])
 def update():
     data = request.json
-    if data and 'nome' in data:
-        status = data['status']
-        if "ROUBANDO" in status:
-            cofres_liberacao[data['nome']] = "ROUBANDO..."
-        elif status.count(':') == 2: # Formato HH:MM:SS
-            h, m, s = map(int, status.split(':'))
-            segundos_faltando = h * 3600 + m * 60 + s
-            cofres_liberacao[data['nome']] = time.time() + segundos_faltando
-        else:
-            cofres_liberacao[data['nome']] = "LIVRE"
+    if not data: return {"status": "error"}, 400
+    
+    if 'todos' in data:
+        for nome, status in data['todos'].items():
+            processar_status(nome, status)
+    elif 'nome' in data:
+        processar_status(data['nome'], data['status'])
+        
     return {"status": "ok"}
 
 async def atualizar_painel():
@@ -44,12 +54,12 @@ async def atualizar_painel():
             
             for nome in sorted(cofres_liberacao.keys()):
                 val = cofres_liberacao[nome]
-                if isinstance(val, float):
+                if isinstance(val, (float, int)):
                     restante = int(val - agora)
                     if restante > 0:
                         m, s = divmod(restante, 60)
                         h, m = divmod(m, 60)
-                        status_str = f"🔴 `释放: {h:02d}:{m:02d}:{s:02d}`"
+                        status_str = f"🔴 `{h:02d}:{m:02d}:{s:02d}`"
                     else:
                         status_str = "🟢 **LIVRE**"
                 elif val == "ROUBANDO...":
@@ -60,10 +70,9 @@ async def atualizar_painel():
                 descricao += f"**{nome}**: {status_str}\n"
             
             embed.description = descricao
-            embed.set_footer(text="Atualizando em tempo real • v0.4")
+            embed.set_footer(text=f"Sincronizado • Próxima atualização visual em 1s")
 
             try:
-                # Tenta encontrar a última mensagem do bot no canal para editar
                 if msg_painel is None:
                     async for message in canal.history(limit=10):
                         if message.author == bot.user:
@@ -73,14 +82,12 @@ async def atualizar_painel():
                 if msg_painel:
                     await msg_painel.edit(embed=embed)
                 else:
-                    # Se não achou nenhuma, limpa o canal e envia uma nova
                     await canal.purge(limit=5, check=lambda m: m.author == bot.user)
                     msg_painel = await canal.send(embed=embed)
-            except Exception as e:
-                print(f"Erro ao atualizar: {e}")
-                msg_painel = None # Reseta para tentar achar/criar na próxima volta
+            except:
+                msg_painel = None
         
-        await asyncio.sleep(1) # Atualiza o cronômetro a cada 1 segundo
+        await asyncio.sleep(1)
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
